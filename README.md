@@ -11,3 +11,13 @@ node server_main.js
 
 server_main.js should load the server.js into a worker and handle the socket requests.
 
+# Next steps
+
+## Step 1
+
+Modify CPython.js after it's built. Not sure if this is doable, have to replace the sockets.    
+
+## Step 2
+Do this with CPython build (without dlo)
+Debug a test file. 
+Need an extension to implement debug adapter server that spawns the CPython.js as a worker, loading debugpy inside of it.
