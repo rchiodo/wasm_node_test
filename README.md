@@ -4,10 +4,16 @@
 
 Build like this:
 
+```
+cd socket_server_c
 emcc --js-library socket_file.js server.c -o server.js -s EXIT_RUNTIME
+cd ..
+```
 
 Run like this:
-node server_main.js
+```
+node ./socket_server_c/server_main.js
+```
 
 server_main.js should load the server.js into a worker and handle the socket requests.
 
