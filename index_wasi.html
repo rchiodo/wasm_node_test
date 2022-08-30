@@ -1,0 +1,73 @@
+<!doctype html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>WebAssembly Hello World</title>
+</head>
+
+<body>
+    <div id="textcontent"></div>
+    <script type="text/javascript">
+        var heapu32;
+        var heapu8;
+        var stdout = console.log.bind(console);
+        var stderr = console.warn.bind(console);
+        var streams = ['', '', ''];
+        function printChar(stream, curr) {
+            var dest = stream === 1 ? stdout : stderr;
+            if (curr === 0 || curr === 10) {
+                var str = streams[stream];
+                dest(str);
+                streams[stream] = '';
+            } else {
+                streams[stream] += String.fromCharCode(curr);
+            }
+        }
+        function _fd_write(fd, iov, iovcnt, pnum) {
+            var num = 0;
+            for (var i = 0; i < iovcnt; i++) {
+                var ptr = heapu32[((iov) >> 2)];
+                var len = heapu32[(((iov) + (4)) >> 2)];
+                iov += 8;
+                for (var j = 0; j < len; j++) {
+                    printChar(fd, heapu8[ptr + j]);
+                }
+                num += len;
+            }
+            heapu32[((pnum) >> 2)] = num;
+            return 0;
+        }
+        function _fd_close(fd) {
+            return 0;
+        }
+        function _fd_fdstat_get(fd, iov) {
+            return 0;
+        }
+        function _fd_seek(fd, offset, where) {
+            return 0;
+        }
+        function _proc_exit() {
+            return 0;
+        }
+        const imports = {};
+        imports.wasi_snapshot_preview1 = {};
+        imports.wasi_snapshot_preview1.fd_write = _fd_write;
+        imports.wasi_snapshot_preview1.fd_close = _fd_close;
+        imports.wasi_snapshot_preview1.fd_fdstat_get = _fd_fdstat_get;
+        imports.wasi_snapshot_preview1.fd_seek = _fd_seek;
+        imports.wasi_snapshot_preview1.proc_exit = _proc_exit;
+
+        fetch("hello_world_wasi.wasm")
+            .then(resp => WebAssembly.instantiateStreaming(resp, imports))
+            .then(result => {
+                console.log(`Starting wasm`);
+                heapu32 = new Uint32Array(result.instance.exports.memory.buffer);
+                heapu8 = new Uint8Array(result.instance.exports.memory.buffer);
+                result.instance.exports._start();
+            })
+
+    </script>
+</body>
+
+</html>
