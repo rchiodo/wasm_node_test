@@ -10,6 +10,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@vscode/sync-api-common": "^0.1.0",
     "ws": "^8.8.1"
   }
 }

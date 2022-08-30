@@ -30,13 +30,20 @@
         },
         {
             "name": "Launch Server",
-            "program": "${workspaceFolder}/server.js",
+            "program": "${workspaceFolder}/server_main.js",
+            "request": "launch",
+            "console": "integratedTerminal",
+            "type": "node",
+            "args": ["5000"]
+        },
+        {
+            "name": "Launch Asyncify",
+            "program": "${workspaceFolder}/asyncify_test.js",
             "request": "launch",
             "skipFiles": [
                 "<node_internals>/**"
             ],
             "type": "node",
-            "args": ["5000"]
         },
         {
             "name": "Python: Current File",

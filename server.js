@@ -200,6 +200,20 @@ if (ENVIRONMENT_IS_SHELL) {
 
   if (typeof quit == 'function') {
     quit_ = (status, toThrow) => {
+      // Unlike node which has process.exitCode, d8 has no such mechanism. So we
+      // have no way to set the exit code and then let the program exit with
+      // that code when it naturally stops running (say, when all setTimeouts
+      // have completed). For that reason we must call `quit` - the only way to
+      // set the exit code - but quit also halts immediately, so we need to be
+      // careful of whether the runtime is alive or not, which is why this code
+      // path looks different than node. It also has the downside that it will
+      // halt the entire program when no code remains to run, which means this
+      // is not friendly for bundling this code into a larger codebase, and for
+      // that reason the "shell" environment is mainly useful for testing whole
+      // programs by themselves, basically.
+      if (runtimeKeepaliveCounter) {
+        throw toThrow;
+      }
       logExceptionOnExit(toThrow);
       quit(status);
     };
@@ -436,7 +450,7 @@ function unexportedRuntimeSymbol(sym) {
 
 var wasmBinary;
 if (Module['wasmBinary']) wasmBinary = Module['wasmBinary'];legacyModuleProp('wasmBinary', 'wasmBinary');
-var noExitRuntime = Module['noExitRuntime'] || true;legacyModuleProp('noExitRuntime', 'noExitRuntime');
+var noExitRuntime = Module['noExitRuntime'] || false;legacyModuleProp('noExitRuntime', 'noExitRuntime');
 
 if (typeof WebAssembly != 'object') {
   abort('no native wasm support detected');
@@ -740,8 +754,11 @@ var __ATPOSTRUN__ = []; // functions called after the main() is called
 
 var runtimeInitialized = false;
 
+var runtimeExited = false;
+var runtimeKeepaliveCounter = 0;
+
 function keepRuntimeAlive() {
-  return noExitRuntime;
+  return noExitRuntime || runtimeKeepaliveCounter > 0;
 }
 
 function preRun() {
@@ -778,6 +795,15 @@ function preMain() {
   callRuntimeCallbacks(__ATMAIN__);
 }
 
+function exitRuntime() {
+  checkStackCookie();
+  ___funcs_on_exit(); // Native atexit() functions
+  callRuntimeCallbacks(__ATEXIT__);
+  FS.quit();
+TTY.shutdown();
+  runtimeExited = true;
+}
+
 function postRun() {
   checkStackCookie();
 
@@ -804,6 +830,7 @@ function addOnPreMain(cb) {
 }
 
 function addOnExit(cb) {
+  __ATEXIT__.unshift(cb);
 }
 
 function addOnPostRun(cb) {
@@ -980,6 +1007,7 @@ function createExportWrapper(name, fixedasm) {
       asm = Module['asm'];
     }
     assert(runtimeInitialized, 'native function `' + displayName + '` called before runtime initialization');
+    assert(!runtimeExited, 'native function `' + displayName + '` called after runtime exit (use NO_EXIT_RUNTIME to keep it alive after main() exits)');
     if (!asm[name]) {
       assert(asm[name], 'exported native function `' + displayName + '` not found');
     }
@@ -1288,15 +1316,6 @@ var ASM_CONSTS = {
       var js = jsStackTrace();
       if (Module['extraStackTrace']) js += '\n' + Module['extraStackTrace']();
       return demangleAll(js);
-    }
-
-  function warnOnce(text) {
-      if (!warnOnce.shown) warnOnce.shown = {};
-      if (!warnOnce.shown[text]) {
-        warnOnce.shown[text] = 1;
-        if (ENVIRONMENT_IS_NODE) text = 'warning: ' + text;
-        err(text);
-      }
     }
 
   function writeArrayToMemory(array, buffer) {
@@ -3762,38 +3781,40 @@ var ASM_CONSTS = {
       var stream = FS.getStream(fd)
       return stream.node.sock;
   }
-  var FileSockets = {counter:0,next_name:function () {
+  var FileSockets = {counter:0,sync_api:undefined,connection:undefined,next_name:function () {
           FileSockets.counter += 1;
           return `socket${FileSockets.counter}`;
       },mount:function () {
+          FileSockets.sync_api = require('@vscode/sync-api-common/node');
+          const { isMainThread, parentPort } = require('node:worker_threads');
+          if (isMainThread) {
+              throw new Error(`FileSockets have to be mounted on a worker thread`);
+          }
+          // Setup our connection
+          FileSockets.connection = new FileSockets.sync_api.ClientConnection(parentPort);
           // return a root node
           return FS.createNode(null, '/', 49152, 0);
       },stream_ops:{poll:function (stream) {
-              console.log(`polling`);
-              var sock = stream.node.sock;
-              return sock.sock_ops.poll(sock);
+              return 0;
           },ioctl:function (stream, request, varargs) {
-              console.log(`ioctl`);
-              var sock = stream.node.sock;
-              return sock.sock_ops.ioctl(sock, request, varargs);
+              return 0;
           },read:function (stream, buffer, offset, length, position /* ignored */) {
-              console.log(`read`);
-              var sock = stream.node.sock;
-              var msg = sock.sock_ops.recvmsg(sock, length);
-              if (!msg) {
-                  // socket is closed
-                  return 0;
+              var result = FileSockets.connection.sendRequest('read', { length }, new FileSockets.sync_api.VariableResult("json"));
+              if (result.errno !== 0) {
+                  return -1;
               }
-              buffer.set(msg.buffer, offset);
-              return msg.buffer.length;
+              stringToUTF8Array(result.data.value, buffer, offset, length);
+              return result.data.value.length;
           },write:function (stream, buffer, offset, length, position /* ignored */) {
-              console.log(`write`);
-              var sock = stream.node.sock;
-              return sock.sock_ops.sendmsg(sock, buffer, offset, length);
+              var str = UTF8ArrayToString(buffer, offset, length);
+              var result = FileSockets.connection.sendRequest('write', { str }, new FileSockets.sync_api.VariableResult("json"));
+              if (result.errno !== 0) {
+                  return -1;
+              }
+              return length;
           },close:function (stream) {
-              console.log(`close`);
-              var sock = stream.node.sock;
-              sock.sock_ops.close(sock);
+              FileSockets.connection.sendRequest('close', {}, new FileSockets.sync_api.VariableResult("json"));
+              return 0;
           }}};
   function ___syscall_accept4(fd, addr, addrlen, flags) {
       // Returns a new socket
@@ -3971,11 +3992,13 @@ var ASM_CONSTS = {
   function exitJS(status, implicit) {
       EXITSTATUS = status;
   
-      checkUnflushedContent();
+      if (!keepRuntimeAlive()) {
+        exitRuntime();
+      }
   
       // if exit() was called explicitly, warn the user if the runtime isn't actually being shut down
       if (keepRuntimeAlive() && !implicit) {
-        var msg = 'program exited (with status: ' + status + '), but EXIT_RUNTIME is not set, so halting execution but not exiting the runtime or preventing further async execution (build with EXIT_RUNTIME=1, if you want a true shutdown)';
+        var msg = 'program exited (with status: ' + status + '), but keepRuntimeAlive() is set (counter=' + runtimeKeepaliveCounter + ') due to an async operation, so halting execution but not exiting the runtime or preventing further async execution (you can use emscripten_force_exit, if you want to force a true shutdown)';
         err(msg);
       }
   
@@ -4469,6 +4492,14 @@ var ASM_CONSTS = {
     return ret.join('');
   }
 
+  function warnOnce(text) {
+      if (!warnOnce.shown) warnOnce.shown = {};
+      if (!warnOnce.shown[text]) {
+        warnOnce.shown[text] = 1;
+        if (ENVIRONMENT_IS_NODE) text = 'warning: ' + text;
+        err(text);
+      }
+    }
 
   function getCFunc(ident) {
       var func = Module['_' + ident]; // closure exported function
@@ -4748,6 +4779,9 @@ var _htons = Module["_htons"] = createExportWrapper("htons");
 
 /** @type {function(...*):?} */
 var ___errno_location = Module["___errno_location"] = createExportWrapper("__errno_location");
+
+/** @type {function(...*):?} */
+var ___funcs_on_exit = Module["___funcs_on_exit"] = createExportWrapper("__funcs_on_exit");
 
 /** @type {function(...*):?} */
 var _fflush = Module["_fflush"] = createExportWrapper("fflush");
@@ -5252,45 +5286,6 @@ function run(args) {
     doRun();
   }
   checkStackCookie();
-}
-
-function checkUnflushedContent() {
-  // Compiler settings do not allow exiting the runtime, so flushing
-  // the streams is not possible. but in ASSERTIONS mode we check
-  // if there was something to flush, and if so tell the user they
-  // should request that the runtime be exitable.
-  // Normally we would not even include flush() at all, but in ASSERTIONS
-  // builds we do so just for this check, and here we see if there is any
-  // content to flush, that is, we check if there would have been
-  // something a non-ASSERTIONS build would have not seen.
-  // How we flush the streams depends on whether we are in SYSCALLS_REQUIRE_FILESYSTEM=0
-  // mode (which has its own special function for this; otherwise, all
-  // the code is inside libc)
-  var oldOut = out;
-  var oldErr = err;
-  var has = false;
-  out = err = (x) => {
-    has = true;
-  }
-  try { // it doesn't matter if it fails
-    _fflush(0);
-    // also flush in the JS FS layer
-    ['stdout', 'stderr'].forEach(function(name) {
-      var info = FS.analyzePath('/dev/' + name);
-      if (!info) return;
-      var stream = info.object;
-      var rdev = stream.rdev;
-      var tty = TTY.ttys[rdev];
-      if (tty && tty.output && tty.output.length) {
-        has = true;
-      }
-    });
-  } catch(e) {}
-  out = oldOut;
-  err = oldErr;
-  if (has) {
-    warnOnce('stdio streams had content in them that was not flushed. you should set EXIT_RUNTIME to 1 (see the FAQ), or make sure to emit a newline when you printf etc.');
-  }
 }
 
 if (Module['preInit']) {

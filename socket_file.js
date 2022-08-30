@@ -1,44 +1,48 @@
 var FileSockets = {
     counter: Number = 0,
+    sync_api: any = undefined,
+    connection: any = undefined,
     next_name: function () {
         FileSockets.counter += 1;
         return `socket${FileSockets.counter}`;
     },
     mount: function () {
+        FileSockets.sync_api = require('@vscode/sync-api-common/node');
+        const { isMainThread, parentPort } = require('node:worker_threads');
+        if (isMainThread) {
+            throw new Error(`FileSockets have to be mounted on a worker thread`);
+        }
+        // Setup our connection
+        FileSockets.connection = new FileSockets.sync_api.ClientConnection(parentPort);
         // return a root node
         return FS.createNode(null, '/', 49152, 0);
     },
     stream_ops: {
         poll: function (stream) {
-            console.log(`polling`);
-            var sock = stream.node.sock;
-            return sock.sock_ops.poll(sock);
+            return 0;
         },
         ioctl: function (stream, request, varargs) {
-            console.log(`ioctl`);
-            var sock = stream.node.sock;
-            return sock.sock_ops.ioctl(sock, request, varargs);
+            return 0;
         },
         read: function (stream, buffer, offset, length, position /* ignored */) {
-            console.log(`read`);
-            var sock = stream.node.sock;
-            var msg = sock.sock_ops.recvmsg(sock, length);
-            if (!msg) {
-                // socket is closed
-                return 0;
+            var result = FileSockets.connection.sendRequest('read', { length }, new FileSockets.sync_api.VariableResult("json"));
+            if (result.errno !== 0) {
+                return -1;
             }
-            buffer.set(msg.buffer, offset);
-            return msg.buffer.length;
+            stringToUTF8Array(result.data.value, buffer, offset, length);
+            return result.data.value.length;
         },
         write: function (stream, buffer, offset, length, position /* ignored */) {
-            console.log(`write`);
-            var sock = stream.node.sock;
-            return sock.sock_ops.sendmsg(sock, buffer, offset, length);
+            var str = UTF8ArrayToString(buffer, offset, length);
+            var result = FileSockets.connection.sendRequest('write', { str }, new FileSockets.sync_api.VariableResult("json"));
+            if (result.errno !== 0) {
+                return -1;
+            }
+            return length;
         },
         close: function (stream) {
-            console.log(`close`);
-            var sock = stream.node.sock;
-            sock.sock_ops.close(sock);
+            FileSockets.connection.sendRequest('close', {}, new FileSockets.sync_api.VariableResult("json"));
+            return 0;
         }
     }
 }
