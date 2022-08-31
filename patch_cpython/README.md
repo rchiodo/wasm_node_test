@@ -20,3 +20,15 @@ Rebuild CPython to use our custom library.
 
 What happens with different versions then? And does CPython want to support this option?
 
+# What happens after patching
+
+Need to 
+- Find node_modules next to new .js file
+- Write debug extension that provides the 'server' side of the socket
+- Debug extension would start the python.js as a webworker in the extension host, passing it the parameters for running (--connect) and the file to debug
+
+Could test first with 
+- Create test.js that is the 'server' side for a socket
+- Write python app that connects to a socket
+- Send messages back and forth
+

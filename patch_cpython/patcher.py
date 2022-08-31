@@ -1,11 +1,13 @@
 import argparse
 import re
+import shutil
+import os
 
 pre_run_code = """
 var CustomSockets = {
-    counter: Number = 0,
-    sync_api: any = undefined,
-    connection: any = undefined,
+    counter: 0,
+    sync_api: undefined,
+    connection: undefined,
     next_name: function () {
         CustomSockets.counter += 1;
         return `socket${CustomSockets.counter}`;
@@ -51,7 +53,7 @@ var CustomSockets = {
     }
 }
 
-function create_socket_fs_node() {
+function create_custom_socket() {
     var name = CustomSockets.next_name();
     var node = FS.createNode(CustomSockets.root, name, 49152, 0)
     var sock = {};
@@ -86,7 +88,7 @@ function ___syscall_listen(fd, backlog) {
 syscall_socket = """
 function ___syscall_socket(domain, type, protocol) {
     // Creating the fd for the type of socket
-    var sock = create_socket_fs_node();
+    var sock = create_custom_socket();
     sock.domain = domain;
     sock.type = type;
     sock.protocol = protocol;
@@ -98,7 +100,7 @@ function ___syscall_socket(domain, type, protocol) {
 syscall_accept4 = """
 function ___syscall_accept4(fd, addr, addrlen, flags) {
     // Returns a new socket
-    var newSock = create_socket_fs_node();
+    var newSock = create_custom_socket();
     var current = get_socket_from_fd(fd);
     if (addr !== 0) {
         var info = getSocketAddress(addr, addrlen);
@@ -110,47 +112,97 @@ function ___syscall_accept4(fd, addr, addrlen, flags) {
 }
 """
 
-def replace_func(lines: str, func_name: str, new_func: str) -> str:
-    match = re.findall(f"function {func_name}\(.*\)", lines)
+def replace_func(input: str, func_name: str, new_func: str) -> str:
+    # Find position of function
+    matches = re.finditer(f"function {func_name}\\(.*?\\).*?{{", input)
+    *_, last = matches
+    start = last.start()
+
+    # Go forward find { and then }
+    pos = last.end()
+    brace_count = 1
+    while pos < len(input) and brace_count > 0:
+        pos += 1
+        char = input[pos]
+        if char == "{":
+            brace_count += 1
+        elif char == "}":
+            brace_count -= 1
+
+    if pos >= len(input):
+        raise Exception(f"Went off the end of the input str: {pos}")
+
+    # From start to pos should be the contents of the function
+    return input[:start] + new_func + input[pos+1:]
 
 
-def patch(input: str, output: str):
-    # Make sure not the same value
-    if input == output:
-        raise Exception(f"{input} is the same as the output.")
 
-    lines = None
+def patch(input: str, output_dir: str):
+    input = os.path.realpath(input)
+    output_dir = os.path.realpath(output_dir)
+
+    # Make sure not the same subdirectory (as we'll be copying a bunch of other files too)
+    input_dir = os.path.dirname(input)
+    if input_dir == output_dir:
+        raise Exception(f"{input} dir is the same as the output.")
+
+    if not os.path.exists(output_dir):
+        raise Exception(f"{output_dir} has to exist prior to patching")
+
+    # Remove the output tree and recreated it
+    shutil.rmtree(output_dir, ignore_errors=True)
+    os.mkdir(output_dir)
+
+    # Create a build dir. This is where all the build output will go
+    output_python_build_dir = os.path.join(output_dir, "build", "patched")
+    shutil.copytree(input_dir, output_python_build_dir)
+
+    # This should already contain a python.js. That's the file we want to edit
+    input_basename = os.path.basename(input)
+    output_python_js = os.path.join(output_python_build_dir, input_basename)
+
+    # Search for OS.py in the 'lib' folder. Need lib folder too
+    os_py = os.path.realpath(os.path.join(input_dir, "..", "..", "Lib", "os.py"))
+    if os.path.exists(os_py):
+        shutil.copytree(os.path.dirname(os_py), os.path.join(output_dir, "Lib"))
+
+    input_contents = None
     with open(input, 'r') as f:
-        lines = f.read()
+        input_contents = f.read()
 
     # Search for the different functions
-    lines = replace_func(lines, '___syscall_bind', syscall_bind)
-    lines = replace_func(lines, '___syscall_accept4', syscall_accept4)
-    lines = replace_func(lines, '___syscall_socket', syscall_socket)
-    lines = replace_func(lines, '___syscall_listen', syscall_listen)
+    output_contents = replace_func(input_contents, '___syscall_bind', syscall_bind)
+    output_contents = replace_func(output_contents, '___syscall_accept4', syscall_accept4)
+    output_contents = replace_func(output_contents, '___syscall_socket', syscall_socket)
+    output_contents = replace_func(output_contents, '___syscall_listen', syscall_listen)
 
-    # Stick in the prerun hook after the last 'run' entry
-    matches = re.finditer(r".*(run\(\);)", lines, re.MULTILINE)
-    *_, last = matches
-    lines = lines[:last.start] + pre_run_code + lines[last.start:]
+    # Stick in the prerun hook before the last 'run' entry
+    length = len(output_contents)
+    pos = length - 6
+    while pos != length - 500 and not output_contents[pos:].startswith("run();"):
+        pos-=1
+
+    if pos == length - 500:
+        raise Exception(f"{input} seems to be missing a 'run();' call")
+
+    output_contents = output_contents[:pos] + pre_run_code + output_contents[pos:]
 
     # Write these lines to the output
-    with open(output, 'w+') as f:
-        f.write(lines)
-
+    with open(output_python_js, "w+") as f:
+        f.write(output_contents)
 
 
 parser = argparse.ArgumentParser(
-    "builder.py",
+    "patcher.py",
     description="Modifies the CPython's python.js to create custom sockets",
     formatter_class=argparse.RawDescriptionHelpFormatter,
 )
 parser.add_argument("--pythonjs", help="Path to the python.js file", required=True)
-parser.add_argument("--outputjs", help="Path to the new js file", required=True)
+parser.add_argument("--outputdir", help="Path to the massaged output dir", required=True)
 
 def main():
     args = parser.parse_args()
-    patch(args.pythonjs, args.outputjs)
+    patch(args.pythonjs, args.outputdir)
 
 if __name__ == "__main__":
     main()

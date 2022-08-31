@@ -2,6 +2,8 @@
     // Use IntelliSense to learn about possible attributes.
     // Hover to view descriptions of existing attributes.
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    // "python": "/home/rich/.nvm/versions/node/v16.13.0/bin/node",
+    // "pythonArgs": ["/home/rich/source/rchiodo-cpython/builddir/emscripten-node-pthreads-dl/python.js", "-Xfrozen_modules=off"],
     "version": "0.2.0",
     "configurations": [
         {
@@ -52,8 +54,8 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "justMyCode": true,
-            "python": "/home/rich/.nvm/versions/node/v16.13.0/bin/node",
-            "pythonArgs": ["/home/rich/source/rchiodo-cpython/builddir/emscripten-node-pthreads-dl/python.js", "-Xfrozen_modules=off"],
+            "cwd": "${workspaceFolder}/patch_cpython",
+            "args": ["--pythonjs", "/home/rich/source/rchiodo-cpython/builddir/emscripten-node-pthreads-dl/python.js", "--outputjs", "./output/python.js"]
         }
     ]
 }
