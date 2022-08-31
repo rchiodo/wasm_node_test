@@ -5,7 +5,7 @@ const readline = require('readline');
 var rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
 // The worker to access API in sync from.
-const worker = new Worker('./patch_cpython/output/python.js', { argv: ["client.py"] });
+const worker = new Worker('../patch_cpython/output/build/patched/python.js', { argv: ["client.py"] });
 
 const connection = new ServiceConnection(worker);
 
@@ -13,6 +13,15 @@ const connection = new ServiceConnection(worker);
 connection.onRequest('read', async (params) => {
     const result = await new Promise((resolve, reject) => {
         rl.question('Enter result for read: ', (answer) => {
+            resolve(answer);
+        })
+    })
+    return { errno: 0, data: { value: result } };
+});
+connection.onRequest('recvfrom', async (params) => {
+    // This would wait for a message to be written
+    const result = await new Promise((resolve, reject) => {
+        rl.question('Enter result for recvfrom: ', (answer) => {
             resolve(answer);
         })
     })

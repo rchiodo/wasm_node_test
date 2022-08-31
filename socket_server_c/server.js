@@ -3816,15 +3816,44 @@ var ASM_CONSTS = {
               FileSockets.connection.sendRequest('close', {}, new FileSockets.sync_api.VariableResult("json"));
               return 0;
           }}};
+  
+  /** @param {number=} addrlen */
+  function writeSockaddr(sa, family, addr, port, addrlen) {
+      switch (family) {
+        case 2:
+          addr = inetPton4(addr);
+          zeroMemory(sa, 16);
+          if (addrlen) {
+            HEAP32[((addrlen)>>2)] = 16;
+          }
+          HEAP16[((sa)>>1)] = family;
+          HEAP32[(((sa)+(4))>>2)] = addr;
+          HEAP16[(((sa)+(2))>>1)] = _htons(port);
+          break;
+        case 10:
+          addr = inetPton6(addr);
+          zeroMemory(sa, 28);
+          if (addrlen) {
+            HEAP32[((addrlen)>>2)] = 28;
+          }
+          HEAP32[((sa)>>2)] = family;
+          HEAP32[(((sa)+(8))>>2)] = addr[0];
+          HEAP32[(((sa)+(12))>>2)] = addr[1];
+          HEAP32[(((sa)+(16))>>2)] = addr[2];
+          HEAP32[(((sa)+(20))>>2)] = addr[3];
+          HEAP16[(((sa)+(2))>>1)] = _htons(port);
+          break;
+        default:
+          return 5;
+      }
+      return 0;
+    }
   function ___syscall_accept4(fd, addr, addrlen, flags) {
       // Returns a new socket
       var newSock = create_socket_fs_node();
       var current = get_socket_from_fd(fd);
-      if (addr !== 0) {
-          var info = getSocketAddress(addr, addrlen);
-          newSock.info = info;
-      } else {
-          newSock.info = current.info;
+      if (addr !== 0 && current.info) {
+          writeSockaddr(addr, current.info.family, current.info.addr, current.info.port, addrlen);
       }
       return newSock.stream.fd;
   }
@@ -3965,6 +3994,17 @@ var ASM_CONSTS = {
       return 0;
   }
 
+  function ___syscall_recvfrom(fd, buf, len, flags, addr, addrlen) {
+      // Should block trying to receive data from the other side
+      var result = FileSockets.connection.sendRequest(`recvfrom`, { length: len }, new FileSockets.sync_api.VariableResult("json"));
+      var current = get_socket_from_fd(fd);
+      if (addr !== 0 && current.info) {
+          writeSockaddr(addr, current.info.family, current.info.addr, current.info.port, addrlen);
+      }
+      stringToUTF8Array(result.data.value, HEAP8, buf, len);
+      return result.data.value.length;
+  }
+
   function ___syscall_socket(domain, type, protocol) {
       // Creating the fd for the type of socket
       var sock = create_socket_fs_node();
@@ -3980,64 +4020,11 @@ var ASM_CONSTS = {
       HEAPU8.copyWithin(dest, src, src + num);
     }
 
-  function _proc_exit(code) {
-      EXITSTATUS = code;
-      if (!keepRuntimeAlive()) {
-        if (Module['onExit']) Module['onExit'](code);
-        ABORT = true;
-      }
-      quit_(code, new ExitStatus(code));
-    }
-  /** @param {boolean|number=} implicit */
-  function exitJS(status, implicit) {
-      EXITSTATUS = status;
-  
-      if (!keepRuntimeAlive()) {
-        exitRuntime();
-      }
-  
-      // if exit() was called explicitly, warn the user if the runtime isn't actually being shut down
-      if (keepRuntimeAlive() && !implicit) {
-        var msg = 'program exited (with status: ' + status + '), but keepRuntimeAlive() is set (counter=' + runtimeKeepaliveCounter + ') due to an async operation, so halting execution but not exiting the runtime or preventing further async execution (you can use emscripten_force_exit, if you want to force a true shutdown)';
-        err(msg);
-      }
-  
-      _proc_exit(status);
-    }
-  var _exit = exitJS;
-
   function _fd_close(fd) {
   try {
   
       var stream = SYSCALLS.getStreamFromFD(fd);
       FS.close(stream);
-      return 0;
-    } catch (e) {
-    if (typeof FS == 'undefined' || !(e instanceof FS.ErrnoError)) throw e;
-    return e.errno;
-  }
-  }
-
-  /** @param {number=} offset */
-  function doReadv(stream, iov, iovcnt, offset) {
-      var ret = 0;
-      for (var i = 0; i < iovcnt; i++) {
-        var ptr = HEAPU32[((iov)>>2)];
-        var len = HEAPU32[(((iov)+(4))>>2)];
-        iov += 8;
-        var curr = FS.read(stream, HEAP8,ptr, len, offset);
-        if (curr < 0) return -1;
-        ret += curr;
-        if (curr < len) break; // nothing more to read
-      }
-      return ret;
-    }
-  function _fd_read(fd, iov, iovcnt, pnum) {
-  try {
-  
-      var stream = SYSCALLS.getStreamFromFD(fd);
-      var num = doReadv(stream, iov, iovcnt);
-      HEAPU32[((pnum)>>2)] = num;
       return 0;
     } catch (e) {
     if (typeof FS == 'undefined' || !(e instanceof FS.ErrnoError)) throw e;
@@ -4091,6 +4078,30 @@ var ASM_CONSTS = {
   }
   }
 
+  function _proc_exit(code) {
+      EXITSTATUS = code;
+      if (!keepRuntimeAlive()) {
+        if (Module['onExit']) Module['onExit'](code);
+        ABORT = true;
+      }
+      quit_(code, new ExitStatus(code));
+    }
+  /** @param {boolean|number=} implicit */
+  function exitJS(status, implicit) {
+      EXITSTATUS = status;
+  
+      if (!keepRuntimeAlive()) {
+        exitRuntime();
+      }
+  
+      // if exit() was called explicitly, warn the user if the runtime isn't actually being shut down
+      if (keepRuntimeAlive() && !implicit) {
+        var msg = 'program exited (with status: ' + status + '), but keepRuntimeAlive() is set (counter=' + runtimeKeepaliveCounter + ') due to an async operation, so halting execution but not exiting the runtime or preventing further async execution (you can use emscripten_force_exit, if you want to force a true shutdown)';
+        err(msg);
+      }
+  
+      _proc_exit(status);
+    }
 
   function allocateUTF8OnStack(str) {
       var size = lengthBytesUTF8(str) + 1;
@@ -4759,11 +4770,10 @@ var asmLibraryArg = {
   "__syscall_bind": ___syscall_bind,
   "__syscall_fcntl64": ___syscall_fcntl64,
   "__syscall_listen": ___syscall_listen,
+  "__syscall_recvfrom": ___syscall_recvfrom,
   "__syscall_socket": ___syscall_socket,
   "emscripten_memcpy_big": _emscripten_memcpy_big,
-  "exit": _exit,
   "fd_close": _fd_close,
-  "fd_read": _fd_read,
   "fd_seek": _fd_seek,
   "fd_write": _fd_write
 };
@@ -4778,13 +4788,13 @@ var _main = Module["_main"] = createExportWrapper("__main_argc_argv");
 var _htons = Module["_htons"] = createExportWrapper("htons");
 
 /** @type {function(...*):?} */
+var _fflush = Module["_fflush"] = createExportWrapper("fflush");
+
+/** @type {function(...*):?} */
 var ___errno_location = Module["___errno_location"] = createExportWrapper("__errno_location");
 
 /** @type {function(...*):?} */
 var ___funcs_on_exit = Module["___funcs_on_exit"] = createExportWrapper("__funcs_on_exit");
-
-/** @type {function(...*):?} */
-var _fflush = Module["_fflush"] = createExportWrapper("fflush");
 
 /** @type {function(...*):?} */
 var _ntohs = Module["_ntohs"] = createExportWrapper("ntohs");
@@ -5081,7 +5091,6 @@ var missingLibrarySymbols = [
   'getHeapMax',
   'abortOnCannotGrowMemory',
   'emscripten_realloc_buffer',
-  'writeSockaddr',
   'getHostByName',
   'traverseStack',
   'convertPCtoSourceLocation',
@@ -5159,6 +5168,7 @@ var missingLibrarySymbols = [
   'getCanvasElementSize',
   'getEnvStrings',
   'checkWasiClock',
+  'doReadv',
   'setImmediateWrapped',
   'clearImmediateWrapped',
   'polyfillSetImmediate',

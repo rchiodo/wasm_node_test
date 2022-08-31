@@ -92,13 +92,21 @@ function my_syscall_accept4(fd, addr, addrlen, flags) {
     // Returns a new socket
     var newSock = create_socket_fs_node();
     var current = get_socket_from_fd(fd);
-    if (addr !== 0) {
-        var info = getSocketAddress(addr, addrlen);
-        newSock.info = info;
-    } else {
-        newSock.info = current.info;
+    if (addr !== 0 && current.info) {
+        writeSockaddr(addr, current.info.family, current.info.addr, current.info.port, addrlen);
     }
     return newSock.stream.fd;
+}
+
+function my_syscall_recvfrom(fd, buf, len, flags, addr, addrlen) {
+    // Should block trying to receive data from the other side
+    var result = FileSockets.connection.sendRequest(`recvfrom`, { length: len }, new FileSockets.sync_api.VariableResult("json"));
+    var current = get_socket_from_fd(fd);
+    if (addr !== 0 && current.info) {
+        writeSockaddr(addr, current.info.family, current.info.addr, current.info.port, addrlen);
+    }
+    stringToUTF8Array(result.data.value, HEAP8, buf, len);
+    return result.data.value.length;
 }
 
 
@@ -117,6 +125,8 @@ mergeInto(LibraryManager.library, {
     __syscall_listen: my_syscall_listen,
     __syscall_socket__deps: ['$FileSockets'],
     __syscall_socket: my_syscall_socket,
-    __syscall_accept4__deps: ['$getSocketAddress', '$FileSockets'],
-    __syscall_accept4: my_syscall_accept4
+    __syscall_accept4__deps: ['$getSocketAddress', '$FileSockets', '$writeSockaddr'],
+    __syscall_accept4: my_syscall_accept4,
+    __syscall_recvfrom__deps: ['$getSocketAddress', '$FileSockets', '$writeSockaddr'],
+    __syscall_recvfrom: my_syscall_recvfrom
 })

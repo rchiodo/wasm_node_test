@@ -32,11 +32,11 @@
         },
         {
             "name": "Launch Server",
-            "program": "${workspaceFolder}/server_main.js",
+            "program": "${workspaceFolder}/socket_server_c/server_main.js",
             "request": "launch",
             "console": "integratedTerminal",
+            "cwd":"${workspaceRoot}/socket_server_c",
             "type": "node",
-            "args": ["5000"]
         },
         {
             "name": "Launch Asyncify",

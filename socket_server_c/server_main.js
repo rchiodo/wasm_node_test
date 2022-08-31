@@ -18,6 +18,15 @@ connection.onRequest('read', async (params) => {
     })
     return { errno: 0, data: { value: result } };
 });
+connection.onRequest('recvfrom', async (params) => {
+    // This would wait for a message to be written
+    const result = await new Promise((resolve, reject) => {
+        rl.question('Enter result for recvfrom: ', (answer) => {
+            resolve(answer);
+        })
+    })
+    return { errno: 0, data: { value: result } };
+});
 connection.onRequest('write', async (params) => {
     console.log(`WRITE data from socket: ${params.str}`);
     return { errno: 0 };

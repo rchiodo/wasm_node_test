@@ -102,24 +102,58 @@ function ___syscall_accept4(fd, addr, addrlen, flags) {
     // Returns a new socket
     var newSock = create_custom_socket();
     var current = get_socket_from_fd(fd);
-    if (addr !== 0) {
-        var info = getSocketAddress(addr, addrlen);
-        newSock.info = info;
-    } else {
-        newSock.info = current.info;
+    if (addr !== 0 && current.info) {
+        writeSockaddr(addr, current.info.family, current.info.addr, current.info.port, addrlen);
     }
     return newSock.stream.fd;
 }
 """
+syscall_connect = """
+function ___syscall_connect(fd,addr,addrlen) {
+    // Connects client side to a socket
+    var current = get_socket_from_fd(fd);
+    if (addr !== 0) {
+        var info = getSocketAddress(addr, addrlen);
+        current.info = info;
+    }
+    // Don't need to do anything here as we're already connected
+    // Might want to read the address information to determine if
+    // should use custom sockets or default back to web
+    return 0;
+}
+"""
+syscall_getsockname = """
+function ___syscall_getsockname(fd,addr,addrlen) {
+    var current = get_socket_from_fd(fd);
+    if (current && current.info) {
+        writeSockaddr(addr, current.info.family, current.info.addr, current.info.port, addrlen);
+    }
+    return 0;
+}
+"""
+syscall_recvfrom = """
+function ___syscall_recvfrom(fd, buf, len, flags, addr, addrlen) {
+    // Should block trying to receive data from the other side
+    var result = CustomSockets.connection.sendRequest(`recvfrom`, { length: len }, new FileSockets.sync_api.VariableResult("json"));
+    var current = get_socket_from_fd(fd);
+    if (addr !== 0 && current.info) {
+        writeSockaddr(addr, current.info.family, current.info.addr, current.info.port, addrlen);
+    }
+    stringToUTF8Array(result.data.value, HEAP8, buf, len);
+    return result.data.value.length;
+}
+"""
+
 
 def replace_func(input: str, func_name: str, new_func: str) -> str:
     # Find position of function
-    matches = re.finditer(f"function {func_name}\\(.*?\\).*?{{", input)
-    *_, last = matches
-    start = last.start()
+    match = re.match(f"function {func_name}\\(.*?\\).*?{{", input)
+    if match == None:
+        return input
+    start = match.start()
 
     # Go forward find { and then }
-    pos = last.end()
+    pos = match.end()
     brace_count = 1
     while pos < len(input) and brace_count > 0:
         pos += 1
@@ -175,6 +209,9 @@ def patch(input: str, output_dir: str):
     output_contents = replace_func(output_contents, '___syscall_accept4', syscall_accept4)
     output_contents = replace_func(output_contents, '___syscall_socket', syscall_socket)
     output_contents = replace_func(output_contents, '___syscall_listen', syscall_listen)
+    output_contents = replace_func(output_contents, '___syscall_connect', syscall_connect)
+    output_contents = replace_func(output_contents, '___syscall_getsockname', syscall_getsockname)
+    output_contents = replace_func(output_contents, '___syscall_recvfrom', syscall_recvfrom)
 
     # Stick in the prerun hook before the last 'run' entry
     length = len(output_contents)
