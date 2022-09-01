@@ -1,0 +1,1 @@
+Test that sockets can be created in python and socket code can be patched.
