@@ -31,11 +31,21 @@
             ]
         },
         {
-            "name": "Launch Server",
+            "name": "Launch C Server",
             "program": "${workspaceFolder}/socket_server_c/server_main.js",
             "request": "launch",
             "console": "integratedTerminal",
             "cwd":"${workspaceRoot}/socket_server_c",
+            "type": "node",
+            "runtimeExecutable": "/home/rich/.nvm/versions/node/v16.13.0/bin/node",
+        },
+        {
+            "name": "Launch NodeJS Python Socket Client",
+            "program": "${workspaceFolder}/socket_client_python/client.js",
+            "request": "launch",
+            "console": "integratedTerminal",
+            "cwd":"${workspaceRoot}/socket_client_python",
+            "runtimeExecutable": "/home/rich/.nvm/versions/node/v16.13.0/bin/node",
             "type": "node",
         },
         {
@@ -48,14 +58,14 @@
             "type": "node",
         },
         {
-            "name": "Python: Current File",
+            "name": "Python: patcher",
             "type": "python",
             "request": "launch",
-            "program": "${file}",
+            "program": "${workspaceFolder}/patch_cpython/patcher.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "cwd": "${workspaceFolder}/patch_cpython",
-            "args": ["--pythonjs", "/home/rich/source/rchiodo-cpython/builddir/emscripten-node-pthreads-dl/python.js", "--outputjs", "./output/python.js"]
+            "args": ["--pythonjs", "/home/rich/source/rchiodo-cpython/builddir/emscripten-node-pthreads-dl/python.js", "--outputdir", "/home/rich/source/wasm_node_test/patch_cpython/output"]
         }
     ]
 }

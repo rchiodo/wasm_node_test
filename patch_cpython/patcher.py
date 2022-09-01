@@ -12,14 +12,18 @@ var CustomSockets = {
         CustomSockets.counter += 1;
         return `socket${CustomSockets.counter}`;
     },
-    mount: function () {
-        CustomSockets.sync_api = require('@vscode/sync-api-common/node');
-        const { isMainThread, parentPort } = require('node:worker_threads');
-        if (isMainThread) {
-            throw new Error(`CustomSockets have to be mounted on a worker thread`);
+    init: function() {
+        if (CustomSockets.sync_api == undefined) {
+            CustomSockets.sync_api = require('@vscode/sync-api-common/node');
+            const { isMainThread, parentPort } = require('node:worker_threads');
+            if (isMainThread) {
+                throw new Error(`CustomSockets have to be mounted on a worker thread`);
+            }
+            // Setup our connection
+            CustomSockets.connection = new CustomSockets.sync_api.ClientConnection(parentPort);
         }
-        // Setup our connection
-        CustomSockets.connection = new CustomSockets.sync_api.ClientConnection(parentPort);
+    },
+    mount: function () {
         // return a root node
         return FS.createNode(null, '/', 49152, 0);
     },
@@ -31,6 +35,7 @@ var CustomSockets = {
             return 0;
         },
         read: function (stream, buffer, offset, length, position /* ignored */) {
+            CustomSockets.init();
             var result = CustomSockets.connection.sendRequest('read', { length }, new CustomSockets.sync_api.VariableResult("json"));
             if (result.errno !== 0) {
                 return -1;
@@ -39,6 +44,7 @@ var CustomSockets = {
             return result.data.value.length;
         },
         write: function (stream, buffer, offset, length, position /* ignored */) {
+            CustomSockets.init();
             var str = UTF8ArrayToString(buffer, offset, length);
             var result = CustomSockets.connection.sendRequest('write', { str }, new CustomSockets.sync_api.VariableResult("json"));
             if (result.errno !== 0) {
@@ -47,6 +53,7 @@ var CustomSockets = {
             return length;
         },
         close: function (stream) {
+            CustomSockets.init();
             CustomSockets.connection.sendRequest('close', {}, new CustomSockets.sync_api.VariableResult("json"));
             return 0;
         }
@@ -70,6 +77,7 @@ function get_socket_from_fd(fd) {
 """
 syscall_bind = """
 function ___syscall_bind(fd, addr, addrlen) {
+    console.log("syscall_bind");
     // Binding address to the file descriptor
     var info = getSocketAddress(addr, addrlen);
     var socket = get_socket_from_fd(fd);
@@ -79,6 +87,7 @@ function ___syscall_bind(fd, addr, addrlen) {
 """
 syscall_listen = """
 function ___syscall_listen(fd, backlog) {
+    console.log("syscall_listen");
     // Indicates the fd should be waiting for accept
     var current = FS.getStream(fd);
     current.should_listen = true;
@@ -87,6 +96,7 @@ function ___syscall_listen(fd, backlog) {
 """
 syscall_socket = """
 function ___syscall_socket(domain, type, protocol) {
+    console.log("syscall_socket");
     // Creating the fd for the type of socket
     var sock = create_custom_socket();
     sock.domain = domain;
@@ -99,6 +109,7 @@ function ___syscall_socket(domain, type, protocol) {
 """
 syscall_accept4 = """
 function ___syscall_accept4(fd, addr, addrlen, flags) {
+    console.log("syscall_accept4");
     // Returns a new socket
     var newSock = create_custom_socket();
     var current = get_socket_from_fd(fd);
@@ -110,6 +121,7 @@ function ___syscall_accept4(fd, addr, addrlen, flags) {
 """
 syscall_connect = """
 function ___syscall_connect(fd,addr,addrlen) {
+    console.log("syscall_connect");
     // Connects client side to a socket
     var current = get_socket_from_fd(fd);
     if (addr !== 0) {
@@ -124,6 +136,7 @@ function ___syscall_connect(fd,addr,addrlen) {
 """
 syscall_getsockname = """
 function ___syscall_getsockname(fd,addr,addrlen) {
+    console.log("syscall_getsockname");
     var current = get_socket_from_fd(fd);
     if (current && current.info) {
         writeSockaddr(addr, current.info.family, current.info.addr, current.info.port, addrlen);
@@ -133,8 +146,10 @@ function ___syscall_getsockname(fd,addr,addrlen) {
 """
 syscall_recvfrom = """
 function ___syscall_recvfrom(fd, buf, len, flags, addr, addrlen) {
+    console.log("syscall_recvfrom");
+    CustomSockets.init();
     // Should block trying to receive data from the other side
-    var result = CustomSockets.connection.sendRequest(`recvfrom`, { length: len }, new FileSockets.sync_api.VariableResult("json"));
+    var result = CustomSockets.connection.sendRequest(`recvfrom`, { length: len }, new CustomSockets.sync_api.VariableResult("json"));
     var current = get_socket_from_fd(fd);
     if (addr !== 0 && current.info) {
         writeSockaddr(addr, current.info.family, current.info.addr, current.info.port, addrlen);
@@ -147,7 +162,7 @@ function ___syscall_recvfrom(fd, buf, len, flags, addr, addrlen) {
 
 def replace_func(input: str, func_name: str, new_func: str) -> str:
     # Find position of function
-    match = re.match(f"function {func_name}\\(.*?\\).*?{{", input)
+    match = re.search(f"function {func_name}\\(.*?\\).*?{{", input, re.MULTILINE)
     if match == None:
         return input
     start = match.start()
@@ -165,6 +180,17 @@ def replace_func(input: str, func_name: str, new_func: str) -> str:
 
     if pos >= len(input):
         raise Exception(f"Went off the end of the input str: {pos}")
+
+    # See if there's a PTHREAD send to main thread. We have to copy this if so. 
+    # Emscripten uses this to handle all memory on the main thread
+    function = input[start:pos+1]
+    pthread_match = re.search("(if\\s*\\(ENVIRONMENT_IS_PTHREAD\\)\\s*return\\s*_emscripten_proxy_to_main_thread_js\\(.*?\\);)", function, re.MULTILINE)
+    if pthread_match is not None:
+        # Insert position is after the first {
+        insert_pos = new_func.find("{\n")
+        if (insert_pos >= 0):
+            insert_pos += 2
+            new_func = new_func[:insert_pos] + pthread_match.group(0) + "\n" + new_func[insert_pos:]
 
     # From start to pos should be the contents of the function
     return input[:start] + new_func + input[pos+1:]
