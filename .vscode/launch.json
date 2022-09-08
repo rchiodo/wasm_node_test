@@ -49,6 +49,16 @@
             "type": "node",
         },
         {
+            "name": "Launch NodeJS OpenDir Test",
+            "program": "${workspaceFolder}/open_dir_c/main.js",
+            "request": "launch",
+            "console": "integratedTerminal",
+            "cwd":"${workspaceRoot}/open_dir_c",
+            "runtimeExecutable": "/home/rich/.nvm/versions/node/v16.13.0/bin/node",
+            "type": "node",
+            "args": ["/home/rich/source"]
+        },
+        {
             "name": "Launch Asyncify",
             "program": "${workspaceFolder}/asyncify_test.js",
             "request": "launch",
