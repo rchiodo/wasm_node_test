@@ -56,7 +56,17 @@
             "cwd":"${workspaceRoot}/open_dir_c",
             "runtimeExecutable": "/home/rich/.nvm/versions/node/v16.13.0/bin/node",
             "type": "node",
-            "args": ["/home/rich/source"]
+            "args": ["~/source"]
+        },
+        {
+            "name": "Launch NodeJS RealPath Test",
+            "program": "${workspaceFolder}/realpath_c/main.js",
+            "request": "launch",
+            "console": "integratedTerminal",
+            "cwd":"${workspaceRoot}/realpath_c",
+            "runtimeExecutable": "/home/rich/.nvm/versions/node/v16.13.0/bin/node",
+            "type": "node",
+            "args": ["~/source"]
         },
         {
             "name": "Launch Asyncify",
