@@ -14,7 +14,7 @@ int main(int argc, char * argv[]) {
     if (res) { // or: if (res != NULL)
         printf("%s is at %s.\n", argv[1], buf);
     } else {
-        perror("realpath");
+        perror("realpath failure:");
         exit(EXIT_FAILURE);
     }
     return 0;

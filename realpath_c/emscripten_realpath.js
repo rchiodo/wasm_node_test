@@ -82,12 +82,8 @@ function logExceptionOnExit(e) {
   err('exiting due to exception: ' + toLog);
 }
 
-var fs;
-var nodePath;
-var requireNodeFS;
-
 if (ENVIRONMENT_IS_NODE) {
-  if (!(typeof process == 'object' && typeof require == 'function')) throw new Error('not compiled for this environment (did you build to HTML and try to run it not on the web, or set ENVIRONMENT to something - like node - and run it someplace else - like on the web?)');
+  if (typeof process == 'undefined' || !process.release || process.release.name !== 'node') throw new Error('not compiled for this environment (did you build to HTML and try to run it not on the web, or set ENVIRONMENT to something - like node - and run it someplace else - like on the web?)');
   if (ENVIRONMENT_IS_WORKER) {
     scriptDirectory = require('path').dirname(scriptDirectory) + '/';
   } else {
@@ -97,7 +93,10 @@ if (ENVIRONMENT_IS_NODE) {
 // include: node_shell_read.js
 
 
-requireNodeFS = () => {
+var fs;
+var nodePath;
+
+var requireNodeFS = () => {
   // Use nodePath as the indicator for these not being initialized,
   // since in some environments a global fs may have already been
   // created.
@@ -107,7 +106,7 @@ requireNodeFS = () => {
   }
 };
 
-read_ = function shell_read(filename, binary) {
+read_ = (filename, binary) => {
   requireNodeFS();
   filename = nodePath['normalize'](filename);
   return fs.readFileSync(filename, binary ? undefined : 'utf8');
@@ -700,8 +699,8 @@ function writeStackCookie() {
   // The stack grow downwards towards _emscripten_stack_get_end.
   // We write cookies to the final two words in the stack and detect if they are
   // ever overwritten.
-  HEAP32[((max)>>2)] = 0x2135467;
-  HEAP32[(((max)+(4))>>2)] = 0x89BACDFE;
+  HEAPU32[((max)>>2)] = 0x2135467;
+  HEAPU32[(((max)+(4))>>2)] = 0x89BACDFE;
   // Also test the global address 0 for integrity.
   HEAPU32[0] = 0x63736d65; /* 'emsc' */
 }
@@ -1153,7 +1152,7 @@ function createWasm() {
       return exports;
     } catch(e) {
       err('Module.instantiateWasm callback failed with error: ' + e);
-      return false;
+        return false;
     }
   }
 
@@ -1302,7 +1301,12 @@ var ASM_CONSTS = {
       HEAP8.set(array, buffer);
     }
 
-  var PATH = {isAbs:(path) => path.charAt(0) === '/',splitPath:(filename) => {
+  var PATH = {isAbs:(path) => {
+        if (typeof ENVIRONMENT_IS_NODE != 'undefined' && ENVIRONMENT_IS_NODE && typeof nodePath !== 'undefined' && nodePath.isAbsolute !== undefined) {
+            return nodePath.isAbsolute(path);
+        }
+        return path.charAt(0) === '/';
+      },splitPath:(filename) => {
         var splitPathRe = /^(\/?|)([\s\S]*?)((?:\.{1,2}|[^\/]+?|)(\.[^.\/]*|))(?:[\/]*)$/;
         return splitPathRe.exec(filename).slice(1);
       },normalizeArray:(parts, allowAboveRoot) => {
@@ -1328,6 +1332,12 @@ var ASM_CONSTS = {
         }
         return parts;
       },normalize:(path) => {
+        if (typeof ENVIRONMENT_IS_NODE != 'undefined' && ENVIRONMENT_IS_NODE && typeof nodePath !== 'undefined' && nodePath.normalize !== undefined) {
+          const normalized = nodePath.normalize(path);
+          if (normalized) {
+              return normalized.replace(/\\/g, '/');
+          }
+      }
         var isAbsolute = PATH.isAbs(path),
             trailingSlash = path.substr(-1) === '/';
         // Normalize the path
@@ -1361,7 +1371,7 @@ var ASM_CONSTS = {
         if (lastSlash === -1) return path;
         return path.substr(lastSlash+1);
       },join:function() {
-        var paths = Array.prototype.slice.call(arguments, 0);
+        var paths = Array.prototype.slice.call(arguments);
         return PATH.normalize(paths.join('/'));
       },join2:(l, r) => {
         return PATH.normalize(l + '/' + r);
@@ -1590,6 +1600,7 @@ var ASM_CONSTS = {
   
   function zeroMemory(address, size) {
       HEAPU8.fill(0, address, address + size);
+      return address;
     }
   
   function alignMemory(size, alignment) {
@@ -1895,15 +1906,7 @@ var ASM_CONSTS = {
           }
           return { ptr: ptr, allocated: allocated };
         },msync:function(stream, buffer, offset, length, mmapFlags) {
-          if (!FS.isFile(stream.node.mode)) {
-            throw new FS.ErrnoError(43);
-          }
-          if (mmapFlags & 2) {
-            // MAP_PRIVATE calls need not to be synced back to underlying fs
-            return 0;
-          }
-  
-          var bytesWritten = MEMFS.stream_ops.write(stream, buffer, 0, length, offset, false);
+          MEMFS.stream_ops.write(stream, buffer, 0, length, offset, false);
           // should we check if bytesWritten and length are the same?
           return 0;
         }}};
@@ -2191,15 +2194,8 @@ var ASM_CONSTS = {
           NODEFS.stream_ops.read(stream, HEAP8, ptr, length, position);
           return { ptr: ptr, allocated: true };
         },msync:(stream, buffer, offset, length, mmapFlags) => {
-          if (!FS.isFile(stream.node.mode)) {
-            throw new FS.ErrnoError(43);
-          }
-          if (mmapFlags & 2) {
-            // MAP_PRIVATE calls need not to be synced back to underlying fs
-            return 0;
-          }
-  
-          var bytesWritten = NODEFS.stream_ops.write(stream, buffer, 0, length, offset, false);
+          NODEFS.stream_ops.write(stream, buffer, 0, length, offset, false);
+          // should we check if bytesWritten and length are the same?
           return 0;
         }}};
   
@@ -2226,7 +2222,18 @@ var ASM_CONSTS = {
         } else {
           fs.writeFileSync(path, '', { mode: mode });
         }
-      },mkdir:function() { fs.mkdirSync.apply(void 0, arguments); },symlink:function() { fs.symlinkSync.apply(void 0, arguments); },rename:function() { fs.renameSync.apply(void 0, arguments); },rmdir:function() { fs.rmdirSync.apply(void 0, arguments); },readdir:function() { return ['.', '..'].concat(fs.readdirSync.apply(void 0, arguments)); },unlink:function() { fs.unlinkSync.apply(void 0, arguments); },readlink:function() { return fs.readlinkSync.apply(void 0, arguments); },stat:function() { return fs.statSync.apply(void 0, arguments); },lstat:function() { return fs.lstatSync.apply(void 0, arguments); },chmod:function() { fs.chmodSync.apply(void 0, arguments); },fchmod:function() { fs.fchmodSync.apply(void 0, arguments); },chown:function() { fs.chownSync.apply(void 0, arguments); },fchown:function() { fs.fchownSync.apply(void 0, arguments); },truncate:function() { fs.truncateSync.apply(void 0, arguments); },ftruncate:function(fd, len) {
+      },mkdir:function() { fs.mkdirSync.apply(void 0, arguments); },symlink:function() { fs.symlinkSync.apply(void 0, arguments); },rename:function() { fs.renameSync.apply(void 0, arguments); },rmdir:function() { fs.rmdirSync.apply(void 0, arguments); },readdir:function() { return ['.', '..'].concat(fs.readdirSync.apply(void 0, arguments)); },unlink:function() { fs.unlinkSync.apply(void 0, arguments); },readlink:function() { 
+        try {
+          return fs.readlinkSync.apply(void 0, arguments);
+        } catch (e) {
+          // On windows, node will return an e.code of 'UNKNOWN' when it
+          // cannot read a link
+          if (e.code === 'UNKNOWN') {
+              throw new FS.ErrnoError(ERRNO_CODES['EINVAL']); // We want EINVAL
+          }
+          throw e;
+        } 
+      },stat:function() { return fs.statSync.apply(void 0, arguments); },lstat:function() { return fs.lstatSync.apply(void 0, arguments); },chmod:function() { fs.chmodSync.apply(void 0, arguments); },fchmod:function() { fs.fchmodSync.apply(void 0, arguments); },chown:function() { fs.chownSync.apply(void 0, arguments); },fchown:function() { fs.fchownSync.apply(void 0, arguments); },truncate:function() { fs.truncateSync.apply(void 0, arguments); },ftruncate:function(fd, len) {
         // See https://github.com/nodejs/node/issues/35632
         if (len < 0) {
           throw new FS.ErrnoError(28);
@@ -2330,12 +2337,9 @@ var ASM_CONSTS = {
           // this stream is created by in-memory filesystem
           return VFS.msync(stream, buffer, offset, length, mmapFlags);
         }
-        if (mmapFlags & 2) {
-          // MAP_PRIVATE calls need not to be synced back to underlying fs
-          return 0;
-        }
   
         FS.write(stream, buffer, 0, length, offset);
+        // should we check if bytesWritten and length are the same?
         return 0;
       },munmap:function() {
         return 0;
@@ -3271,7 +3275,7 @@ var ASM_CONSTS = {
         }
         return stream.stream_ops.mmap(stream, length, position, prot, flags);
       },msync:(stream, buffer, offset, length, mmapFlags) => {
-        if (!stream || !stream.stream_ops.msync) {
+        if (!stream.stream_ops.msync) {
           return 0;
         }
         return stream.stream_ops.msync(stream, buffer, offset, length, mmapFlags);
@@ -3919,8 +3923,7 @@ var ASM_CONSTS = {
         if (dirfd === -100) {
           dir = FS.cwd();
         } else {
-          var dirstream = FS.getStream(dirfd);
-          if (!dirstream) throw new FS.ErrnoError(8);
+          var dirstream = SYSCALLS.getStreamFromFD(dirfd);
           dir = dirstream.path;
         }
         if (path.length == 0) {
@@ -3943,7 +3946,7 @@ var ASM_CONSTS = {
         HEAP32[((buf)>>2)] = stat.dev;
         HEAP32[(((buf)+(8))>>2)] = stat.ino;
         HEAP32[(((buf)+(12))>>2)] = stat.mode;
-        HEAP32[(((buf)+(16))>>2)] = stat.nlink;
+        HEAPU32[(((buf)+(16))>>2)] = stat.nlink;
         HEAP32[(((buf)+(20))>>2)] = stat.uid;
         HEAP32[(((buf)+(24))>>2)] = stat.gid;
         HEAP32[(((buf)+(28))>>2)] = stat.rdev;
@@ -3951,14 +3954,21 @@ var ASM_CONSTS = {
         HEAP32[(((buf)+(48))>>2)] = 4096;
         HEAP32[(((buf)+(52))>>2)] = stat.blocks;
         (tempI64 = [Math.floor(stat.atime.getTime() / 1000)>>>0,(tempDouble=Math.floor(stat.atime.getTime() / 1000),(+(Math.abs(tempDouble))) >= 1.0 ? (tempDouble > 0.0 ? ((Math.min((+(Math.floor((tempDouble)/4294967296.0))), 4294967295.0))|0)>>>0 : (~~((+(Math.ceil((tempDouble - +(((~~(tempDouble)))>>>0))/4294967296.0)))))>>>0) : 0)],HEAP32[(((buf)+(56))>>2)] = tempI64[0],HEAP32[(((buf)+(60))>>2)] = tempI64[1]);
-        HEAP32[(((buf)+(64))>>2)] = 0;
+        HEAPU32[(((buf)+(64))>>2)] = 0;
         (tempI64 = [Math.floor(stat.mtime.getTime() / 1000)>>>0,(tempDouble=Math.floor(stat.mtime.getTime() / 1000),(+(Math.abs(tempDouble))) >= 1.0 ? (tempDouble > 0.0 ? ((Math.min((+(Math.floor((tempDouble)/4294967296.0))), 4294967295.0))|0)>>>0 : (~~((+(Math.ceil((tempDouble - +(((~~(tempDouble)))>>>0))/4294967296.0)))))>>>0) : 0)],HEAP32[(((buf)+(72))>>2)] = tempI64[0],HEAP32[(((buf)+(76))>>2)] = tempI64[1]);
-        HEAP32[(((buf)+(80))>>2)] = 0;
+        HEAPU32[(((buf)+(80))>>2)] = 0;
         (tempI64 = [Math.floor(stat.ctime.getTime() / 1000)>>>0,(tempDouble=Math.floor(stat.ctime.getTime() / 1000),(+(Math.abs(tempDouble))) >= 1.0 ? (tempDouble > 0.0 ? ((Math.min((+(Math.floor((tempDouble)/4294967296.0))), 4294967295.0))|0)>>>0 : (~~((+(Math.ceil((tempDouble - +(((~~(tempDouble)))>>>0))/4294967296.0)))))>>>0) : 0)],HEAP32[(((buf)+(88))>>2)] = tempI64[0],HEAP32[(((buf)+(92))>>2)] = tempI64[1]);
-        HEAP32[(((buf)+(96))>>2)] = 0;
+        HEAPU32[(((buf)+(96))>>2)] = 0;
         (tempI64 = [stat.ino>>>0,(tempDouble=stat.ino,(+(Math.abs(tempDouble))) >= 1.0 ? (tempDouble > 0.0 ? ((Math.min((+(Math.floor((tempDouble)/4294967296.0))), 4294967295.0))|0)>>>0 : (~~((+(Math.ceil((tempDouble - +(((~~(tempDouble)))>>>0))/4294967296.0)))))>>>0) : 0)],HEAP32[(((buf)+(104))>>2)] = tempI64[0],HEAP32[(((buf)+(108))>>2)] = tempI64[1]);
         return 0;
       },doMsync:function(addr, stream, len, flags, offset) {
+        if (!FS.isFile(stream.node.mode)) {
+          throw new FS.ErrnoError(43);
+        }
+        if (flags & 2) {
+          // MAP_PRIVATE calls need not to be synced back to underlying fs
+          return 0;
+        }
         var buffer = HEAPU8.slice(addr, addr + len);
         FS.msync(stream, buffer, offset, len, flags);
       },varargs:undefined,get:function() {
@@ -4051,38 +4061,6 @@ var ASM_CONSTS = {
     }
   var _exit = exitJS;
 
-  function _fd_close(fd) {
-  try {
-  
-      var stream = SYSCALLS.getStreamFromFD(fd);
-      FS.close(stream);
-      return 0;
-    } catch (e) {
-    if (typeof FS == 'undefined' || !(e instanceof FS.ErrnoError)) throw e;
-    return e.errno;
-  }
-  }
-
-  function convertI32PairToI53Checked(lo, hi) {
-      assert(lo == (lo >>> 0) || lo == (lo|0)); // lo should either be a i32 or a u32
-      assert(hi === (hi|0));                    // hi should be a i32
-      return ((hi + 0x200000) >>> 0 < 0x400001 - !!lo) ? (lo >>> 0) + hi * 4294967296 : NaN;
-    }
-  function _fd_seek(fd, offset_low, offset_high, whence, newOffset) {
-  try {
-  
-      var offset = convertI32PairToI53Checked(offset_low, offset_high); if (isNaN(offset)) return 61;
-      var stream = SYSCALLS.getStreamFromFD(fd);
-      FS.llseek(stream, offset, whence);
-      (tempI64 = [stream.position>>>0,(tempDouble=stream.position,(+(Math.abs(tempDouble))) >= 1.0 ? (tempDouble > 0.0 ? ((Math.min((+(Math.floor((tempDouble)/4294967296.0))), 4294967295.0))|0)>>>0 : (~~((+(Math.ceil((tempDouble - +(((~~(tempDouble)))>>>0))/4294967296.0)))))>>>0) : 0)],HEAP32[((newOffset)>>2)] = tempI64[0],HEAP32[(((newOffset)+(4))>>2)] = tempI64[1]);
-      if (stream.getdents && offset === 0 && whence === 0) stream.getdents = null; // reset readdir state
-      return 0;
-    } catch (e) {
-    if (typeof FS == 'undefined' || !(e instanceof FS.ErrnoError)) throw e;
-    return e.errno;
-  }
-  }
-
   /** @param {number=} offset */
   function doWritev(stream, iov, iovcnt, offset) {
       var ret = 0;
@@ -4109,12 +4087,6 @@ var ASM_CONSTS = {
   }
   }
 
-  var tempRet0 = 0;
-  function setTempRet0(val) {
-      tempRet0 = val;
-    }
-  var _setTempRet0 = setTempRet0;
-
 
   function allocateUTF8OnStack(str) {
       var size = lengthBytesUTF8(str) + 1;
@@ -4122,484 +4094,6 @@ var ASM_CONSTS = {
       stringToUTF8Array(str, HEAP8, ret, size);
       return ret;
     }
-
-  function uleb128Encode(n, target) {
-      assert(n < 16384);
-      if (n < 128) {
-        target.push(n);
-      } else {
-        target.push((n % 128) | 128, n >> 7);
-      }
-    }
-  
-  function sigToWasmTypes(sig) {
-      var typeNames = {
-        'i': 'i32',
-        'j': 'i64',
-        'f': 'f32',
-        'd': 'f64',
-        'p': 'i32',
-      };
-      var type = {
-        parameters: [],
-        results: sig[0] == 'v' ? [] : [typeNames[sig[0]]]
-      };
-      for (var i = 1; i < sig.length; ++i) {
-        assert(sig[i] in typeNames, 'invalid signature char: ' + sig[i]);
-        type.parameters.push(typeNames[sig[i]]);
-      }
-      return type;
-    }
-  function convertJsFunctionToWasm(func, sig) {
-  
-      // If the type reflection proposal is available, use the new
-      // "WebAssembly.Function" constructor.
-      // Otherwise, construct a minimal wasm module importing the JS function and
-      // re-exporting it.
-      if (typeof WebAssembly.Function == "function") {
-        return new WebAssembly.Function(sigToWasmTypes(sig), func);
-      }
-  
-      // The module is static, with the exception of the type section, which is
-      // generated based on the signature passed in.
-      var typeSectionBody = [
-        0x01, // count: 1
-        0x60, // form: func
-      ];
-      var sigRet = sig.slice(0, 1);
-      var sigParam = sig.slice(1);
-      var typeCodes = {
-        'i': 0x7f, // i32
-        'p': 0x7f, // i32
-        'j': 0x7e, // i64
-        'f': 0x7d, // f32
-        'd': 0x7c, // f64
-      };
-  
-      // Parameters, length + signatures
-      uleb128Encode(sigParam.length, typeSectionBody);
-      for (var i = 0; i < sigParam.length; ++i) {
-        assert(sigParam[i] in typeCodes, 'invalid signature char: ' + sigParam[i]);
-        typeSectionBody.push(typeCodes[sigParam[i]]);
-      }
-  
-      // Return values, length + signatures
-      // With no multi-return in MVP, either 0 (void) or 1 (anything else)
-      if (sigRet == 'v') {
-        typeSectionBody.push(0x00);
-      } else {
-        typeSectionBody.push(0x01, typeCodes[sigRet]);
-      }
-  
-      // Rest of the module is static
-      var bytes = [
-        0x00, 0x61, 0x73, 0x6d, // magic ("\0asm")
-        0x01, 0x00, 0x00, 0x00, // version: 1
-        0x01, // Type section code
-      ];
-      // Write the overall length of the type section followed by the body
-      uleb128Encode(typeSectionBody.length, bytes);
-      bytes.push.apply(bytes, typeSectionBody);
-  
-      // The rest of the module is static
-      bytes.push(
-        0x02, 0x07, // import section
-          // (import "e" "f" (func 0 (type 0)))
-          0x01, 0x01, 0x65, 0x01, 0x66, 0x00, 0x00,
-        0x07, 0x05, // export section
-          // (export "f" (func 0 (type 0)))
-          0x01, 0x01, 0x66, 0x00, 0x00,
-      );
-  
-      // We can compile this wasm module synchronously because it is very small.
-      // This accepts an import (at "e.f"), that it reroutes to an export (at "f")
-      var module = new WebAssembly.Module(new Uint8Array(bytes));
-      var instance = new WebAssembly.Instance(module, { 'e': { 'f': func } });
-      var wrappedFunc = instance.exports['f'];
-      return wrappedFunc;
-    }
-  
-  var wasmTableMirror = [];
-  function getWasmTableEntry(funcPtr) {
-      var func = wasmTableMirror[funcPtr];
-      if (!func) {
-        if (funcPtr >= wasmTableMirror.length) wasmTableMirror.length = funcPtr + 1;
-        wasmTableMirror[funcPtr] = func = wasmTable.get(funcPtr);
-      }
-      assert(wasmTable.get(funcPtr) == func, "JavaScript-side Wasm function table mirror is out of date!");
-      return func;
-    }
-  function updateTableMap(offset, count) {
-      if (functionsInTableMap) {
-        for (var i = offset; i < offset + count; i++) {
-          var item = getWasmTableEntry(i);
-          // Ignore null values.
-          if (item) {
-            functionsInTableMap.set(item, i);
-          }
-        }
-      }
-    }
-  
-  var functionsInTableMap = undefined;
-  
-  var freeTableIndexes = [];
-  function getEmptyTableSlot() {
-      // Reuse a free index if there is one, otherwise grow.
-      if (freeTableIndexes.length) {
-        return freeTableIndexes.pop();
-      }
-      // Grow the table
-      try {
-        wasmTable.grow(1);
-      } catch (err) {
-        if (!(err instanceof RangeError)) {
-          throw err;
-        }
-        throw 'Unable to grow wasm table. Set ALLOW_TABLE_GROWTH.';
-      }
-      return wasmTable.length - 1;
-    }
-  
-  function setWasmTableEntry(idx, func) {
-      wasmTable.set(idx, func);
-      // With ABORT_ON_WASM_EXCEPTIONS wasmTable.get is overriden to return wrapped
-      // functions so we need to call it here to retrieve the potential wrapper correctly
-      // instead of just storing 'func' directly into wasmTableMirror
-      wasmTableMirror[idx] = wasmTable.get(idx);
-    }
-  /** @param {string=} sig */
-  function addFunction(func, sig) {
-      assert(typeof func != 'undefined');
-  
-      // Check if the function is already in the table, to ensure each function
-      // gets a unique index. First, create the map if this is the first use.
-      if (!functionsInTableMap) {
-        functionsInTableMap = new WeakMap();
-        updateTableMap(0, wasmTable.length);
-      }
-      if (functionsInTableMap.has(func)) {
-        return functionsInTableMap.get(func);
-      }
-  
-      // It's not in the table, add it now.
-  
-      var ret = getEmptyTableSlot();
-  
-      // Set the new value.
-      try {
-        // Attempting to call this with JS function will cause of table.set() to fail
-        setWasmTableEntry(ret, func);
-      } catch (err) {
-        if (!(err instanceof TypeError)) {
-          throw err;
-        }
-        assert(typeof sig != 'undefined', 'Missing signature argument to addFunction: ' + func);
-        var wrapped = convertJsFunctionToWasm(func, sig);
-        setWasmTableEntry(ret, wrapped);
-      }
-  
-      functionsInTableMap.set(func, ret);
-  
-      return ret;
-    }
-
-  function removeFunction(index) {
-      functionsInTableMap.delete(getWasmTableEntry(index));
-      freeTableIndexes.push(index);
-    }
-
-  var ALLOC_NORMAL = 0;
-  
-  var ALLOC_STACK = 1;
-  function allocate(slab, allocator) {
-      var ret;
-      assert(typeof allocator == 'number', 'allocate no longer takes a type argument')
-      assert(typeof slab != 'number', 'allocate no longer takes a number as arg0')
-  
-      if (allocator == ALLOC_STACK) {
-        ret = stackAlloc(slab.length);
-      } else {
-        ret = abort('malloc was not included, but is needed in allocate. Adding "_malloc" to EXPORTED_FUNCTIONS should fix that. This may be a bug in the compiler, please file an issue.');;
-      }
-  
-      if (!slab.subarray && !slab.slice) {
-        slab = new Uint8Array(slab);
-      }
-      HEAPU8.set(slab, ret);
-      return ret;
-    }
-
-
-
-  function AsciiToString(ptr) {
-      var str = '';
-      while (1) {
-        var ch = HEAPU8[((ptr++)>>0)];
-        if (!ch) return str;
-        str += String.fromCharCode(ch);
-      }
-    }
-
-  /** @param {boolean=} dontAddNull */
-  function writeAsciiToMemory(str, buffer, dontAddNull) {
-      for (var i = 0; i < str.length; ++i) {
-        assert(str.charCodeAt(i) === (str.charCodeAt(i) & 0xff));
-        HEAP8[((buffer++)>>0)] = str.charCodeAt(i);
-      }
-      // Null-terminate the pointer to the HEAP.
-      if (!dontAddNull) HEAP8[((buffer)>>0)] = 0;
-    }
-  function stringToAscii(str, outPtr) {
-      return writeAsciiToMemory(str, outPtr, false);
-    }
-
-  var UTF16Decoder = typeof TextDecoder != 'undefined' ? new TextDecoder('utf-16le') : undefined;;
-  function UTF16ToString(ptr, maxBytesToRead) {
-      assert(ptr % 2 == 0, 'Pointer passed to UTF16ToString must be aligned to two bytes!');
-      var endPtr = ptr;
-      // TextDecoder needs to know the byte length in advance, it doesn't stop on null terminator by itself.
-      // Also, use the length info to avoid running tiny strings through TextDecoder, since .subarray() allocates garbage.
-      var idx = endPtr >> 1;
-      var maxIdx = idx + maxBytesToRead / 2;
-      // If maxBytesToRead is not passed explicitly, it will be undefined, and this
-      // will always evaluate to true. This saves on code size.
-      while (!(idx >= maxIdx) && HEAPU16[idx]) ++idx;
-      endPtr = idx << 1;
-  
-      if (endPtr - ptr > 32 && UTF16Decoder) {
-        return UTF16Decoder.decode(HEAPU8.subarray(ptr, endPtr));
-      } else {
-        var str = '';
-  
-        // If maxBytesToRead is not passed explicitly, it will be undefined, and the for-loop's condition
-        // will always evaluate to true. The loop is then terminated on the first null char.
-        for (var i = 0; !(i >= maxBytesToRead / 2); ++i) {
-          var codeUnit = HEAP16[(((ptr)+(i*2))>>1)];
-          if (codeUnit == 0) break;
-          // fromCharCode constructs a character from a UTF-16 code unit, so we can pass the UTF16 string right through.
-          str += String.fromCharCode(codeUnit);
-        }
-  
-        return str;
-      }
-    }
-
-  function stringToUTF16(str, outPtr, maxBytesToWrite) {
-      assert(outPtr % 2 == 0, 'Pointer passed to stringToUTF16 must be aligned to two bytes!');
-      assert(typeof maxBytesToWrite == 'number', 'stringToUTF16(str, outPtr, maxBytesToWrite) is missing the third parameter that specifies the length of the output buffer!');
-      // Backwards compatibility: if max bytes is not specified, assume unsafe unbounded write is allowed.
-      if (maxBytesToWrite === undefined) {
-        maxBytesToWrite = 0x7FFFFFFF;
-      }
-      if (maxBytesToWrite < 2) return 0;
-      maxBytesToWrite -= 2; // Null terminator.
-      var startPtr = outPtr;
-      var numCharsToWrite = (maxBytesToWrite < str.length*2) ? (maxBytesToWrite / 2) : str.length;
-      for (var i = 0; i < numCharsToWrite; ++i) {
-        // charCodeAt returns a UTF-16 encoded code unit, so it can be directly written to the HEAP.
-        var codeUnit = str.charCodeAt(i); // possibly a lead surrogate
-        HEAP16[((outPtr)>>1)] = codeUnit;
-        outPtr += 2;
-      }
-      // Null-terminate the pointer to the HEAP.
-      HEAP16[((outPtr)>>1)] = 0;
-      return outPtr - startPtr;
-    }
-
-  function lengthBytesUTF16(str) {
-      return str.length*2;
-    }
-
-  function UTF32ToString(ptr, maxBytesToRead) {
-      assert(ptr % 4 == 0, 'Pointer passed to UTF32ToString must be aligned to four bytes!');
-      var i = 0;
-  
-      var str = '';
-      // If maxBytesToRead is not passed explicitly, it will be undefined, and this
-      // will always evaluate to true. This saves on code size.
-      while (!(i >= maxBytesToRead / 4)) {
-        var utf32 = HEAP32[(((ptr)+(i*4))>>2)];
-        if (utf32 == 0) break;
-        ++i;
-        // Gotcha: fromCharCode constructs a character from a UTF-16 encoded code (pair), not from a Unicode code point! So encode the code point to UTF-16 for constructing.
-        // See http://unicode.org/faq/utf_bom.html#utf16-3
-        if (utf32 >= 0x10000) {
-          var ch = utf32 - 0x10000;
-          str += String.fromCharCode(0xD800 | (ch >> 10), 0xDC00 | (ch & 0x3FF));
-        } else {
-          str += String.fromCharCode(utf32);
-        }
-      }
-      return str;
-    }
-
-  function stringToUTF32(str, outPtr, maxBytesToWrite) {
-      assert(outPtr % 4 == 0, 'Pointer passed to stringToUTF32 must be aligned to four bytes!');
-      assert(typeof maxBytesToWrite == 'number', 'stringToUTF32(str, outPtr, maxBytesToWrite) is missing the third parameter that specifies the length of the output buffer!');
-      // Backwards compatibility: if max bytes is not specified, assume unsafe unbounded write is allowed.
-      if (maxBytesToWrite === undefined) {
-        maxBytesToWrite = 0x7FFFFFFF;
-      }
-      if (maxBytesToWrite < 4) return 0;
-      var startPtr = outPtr;
-      var endPtr = startPtr + maxBytesToWrite - 4;
-      for (var i = 0; i < str.length; ++i) {
-        // Gotcha: charCodeAt returns a 16-bit word that is a UTF-16 encoded code unit, not a Unicode code point of the character! We must decode the string to UTF-32 to the heap.
-        // See http://unicode.org/faq/utf_bom.html#utf16-3
-        var codeUnit = str.charCodeAt(i); // possibly a lead surrogate
-        if (codeUnit >= 0xD800 && codeUnit <= 0xDFFF) {
-          var trailSurrogate = str.charCodeAt(++i);
-          codeUnit = 0x10000 + ((codeUnit & 0x3FF) << 10) | (trailSurrogate & 0x3FF);
-        }
-        HEAP32[((outPtr)>>2)] = codeUnit;
-        outPtr += 4;
-        if (outPtr + 4 > endPtr) break;
-      }
-      // Null-terminate the pointer to the HEAP.
-      HEAP32[((outPtr)>>2)] = 0;
-      return outPtr - startPtr;
-    }
-
-  function lengthBytesUTF32(str) {
-      var len = 0;
-      for (var i = 0; i < str.length; ++i) {
-        // Gotcha: charCodeAt returns a 16-bit word that is a UTF-16 encoded code unit, not a Unicode code point of the character! We must decode the string to UTF-32 to the heap.
-        // See http://unicode.org/faq/utf_bom.html#utf16-3
-        var codeUnit = str.charCodeAt(i);
-        if (codeUnit >= 0xD800 && codeUnit <= 0xDFFF) ++i; // possibly a lead surrogate, so skip over the tail surrogate.
-        len += 4;
-      }
-  
-      return len;
-    }
-
-  function allocateUTF8(str) {
-      var size = lengthBytesUTF8(str) + 1;
-      var ret = abort('malloc was not included, but is needed in allocateUTF8. Adding "_malloc" to EXPORTED_FUNCTIONS should fix that. This may be a bug in the compiler, please file an issue.');;
-      if (ret) stringToUTF8Array(str, HEAP8, ret, size);
-      return ret;
-    }
-
-
-  /** @deprecated @param {boolean=} dontAddNull */
-  function writeStringToMemory(string, buffer, dontAddNull) {
-      warnOnce('writeStringToMemory is deprecated and should not be called! Use stringToUTF8() instead!');
-  
-      var /** @type {number} */ lastChar, /** @type {number} */ end;
-      if (dontAddNull) {
-        // stringToUTF8Array always appends null. If we don't want to do that, remember the
-        // character that existed at the location where the null will be placed, and restore
-        // that after the write (below).
-        end = buffer + lengthBytesUTF8(string);
-        lastChar = HEAP8[end];
-      }
-      stringToUTF8(string, buffer, Infinity);
-      if (dontAddNull) HEAP8[end] = lastChar; // Restore the value under the null character.
-    }
-
-
-
-
-  function intArrayToString(array) {
-    var ret = [];
-    for (var i = 0; i < array.length; i++) {
-      var chr = array[i];
-      if (chr > 0xFF) {
-        if (ASSERTIONS) {
-          assert(false, 'Character code ' + chr + ' (' + String.fromCharCode(chr) + ')  at offset ' + i + ' not in 0x00-0xFF.');
-        }
-        chr &= 0xFF;
-      }
-      ret.push(String.fromCharCode(chr));
-    }
-    return ret.join('');
-  }
-
-
-  function getCFunc(ident) {
-      var func = Module['_' + ident]; // closure exported function
-      assert(func, 'Cannot call unknown function ' + ident + ', make sure it is exported');
-      return func;
-    }
-  
-    /**
-     * @param {string|null=} returnType
-     * @param {Array=} argTypes
-     * @param {Arguments|Array=} args
-     * @param {Object=} opts
-     */
-  function ccall(ident, returnType, argTypes, args, opts) {
-      // For fast lookup of conversion functions
-      var toC = {
-        'string': (str) => {
-          var ret = 0;
-          if (str !== null && str !== undefined && str !== 0) { // null string
-            // at most 4 bytes per UTF-8 code point, +1 for the trailing '\0'
-            var len = (str.length << 2) + 1;
-            ret = stackAlloc(len);
-            stringToUTF8(str, ret, len);
-          }
-          return ret;
-        },
-        'array': (arr) => {
-          var ret = stackAlloc(arr.length);
-          writeArrayToMemory(arr, ret);
-          return ret;
-        }
-      };
-  
-      function convertReturnValue(ret) {
-        if (returnType === 'string') {
-          
-          return UTF8ToString(ret);
-        }
-        if (returnType === 'boolean') return Boolean(ret);
-        return ret;
-      }
-  
-      var func = getCFunc(ident);
-      var cArgs = [];
-      var stack = 0;
-      assert(returnType !== 'array', 'Return type should not be "array".');
-      if (args) {
-        for (var i = 0; i < args.length; i++) {
-          var converter = toC[argTypes[i]];
-          if (converter) {
-            if (stack === 0) stack = stackSave();
-            cArgs[i] = converter(args[i]);
-          } else {
-            cArgs[i] = args[i];
-          }
-        }
-      }
-      var ret = func.apply(null, cArgs);
-      function onDone(ret) {
-        if (stack !== 0) stackRestore(stack);
-        return convertReturnValue(ret);
-      }
-  
-      ret = onDone(ret);
-      return ret;
-    }
-
-  
-    /**
-     * @param {string=} returnType
-     * @param {Array=} argTypes
-     * @param {Object=} opts
-     */
-  function cwrap(ident, returnType, argTypes, opts) {
-      return function() {
-        return ccall(ident, returnType, argTypes, arguments, opts);
-      }
-    }
-
-
-  function getTempRet0() {
-      return tempRet0;
-    }
-
 
   var FSNode = /** @constructor */ function(parent, name, mode, rdev) {
     if (!parent) {
@@ -4803,10 +4297,7 @@ var asmLibraryArg = {
   "emscripten_memcpy_big": _emscripten_memcpy_big,
   "emscripten_resize_heap": _emscripten_resize_heap,
   "exit": _exit,
-  "fd_close": _fd_close,
-  "fd_seek": _fd_seek,
-  "fd_write": _fd_write,
-  "setTempRet0": _setTempRet0
+  "fd_write": _fd_write
 };
 var asm = createWasm();
 /** @type {function(...*):?} */
@@ -4820,6 +4311,12 @@ var _main = Module["_main"] = createExportWrapper("__main_argc_argv");
 
 /** @type {function(...*):?} */
 var _fflush = Module["_fflush"] = createExportWrapper("fflush");
+
+/** @type {function(...*):?} */
+var ___get_temp_ret = Module["___get_temp_ret"] = createExportWrapper("__get_temp_ret");
+
+/** @type {function(...*):?} */
+var ___set_temp_ret = Module["___set_temp_ret"] = createExportWrapper("__set_temp_ret");
 
 /** @type {function(...*):?} */
 var _emscripten_stack_init = Module["_emscripten_stack_init"] = function() {
@@ -4894,14 +4391,13 @@ var unexportedRuntimeSymbols = [
   'abort',
   'keepRuntimeAlive',
   'wasmMemory',
+  'stackAlloc',
   'stackSave',
   'stackRestore',
-  'stackAlloc',
-  'writeStackCookie',
-  'checkStackCookie',
-  'tempRet0',
   'getTempRet0',
   'setTempRet0',
+  'writeStackCookie',
+  'checkStackCookie',
   'ptrToString',
   'zeroMemory',
   'stringToNewUTF8',
@@ -4964,6 +4460,7 @@ var unexportedRuntimeSymbols = [
   'cwrap',
   'uleb128Encode',
   'sigToWasmTypes',
+  'generateFuncType',
   'convertJsFunctionToWasm',
   'freeTableIndexes',
   'functionsInTableMap',
@@ -5055,6 +4552,7 @@ var unexportedRuntimeSymbols = [
   'doReadv',
   'doWritev',
   'dlopenMissingError',
+  'createDyncallWrapper',
   'setImmediateWrapped',
   'clearImmediateWrapped',
   'polyfillSetImmediate',
@@ -5145,12 +4643,36 @@ var missingLibrarySymbols = [
   'readI53FromI64',
   'readI53FromU64',
   'convertI32PairToI53',
+  'convertI32PairToI53Checked',
   'convertU32PairToI53',
+  'getCFunc',
+  'ccall',
+  'cwrap',
+  'uleb128Encode',
+  'sigToWasmTypes',
+  'generateFuncType',
+  'convertJsFunctionToWasm',
+  'getEmptyTableSlot',
+  'updateTableMap',
+  'addFunction',
+  'removeFunction',
   'reallyNegative',
   'unSign',
   'strLen',
   'reSign',
   'formatString',
+  'intArrayToString',
+  'AsciiToString',
+  'stringToAscii',
+  'UTF16ToString',
+  'stringToUTF16',
+  'lengthBytesUTF16',
+  'UTF32ToString',
+  'stringToUTF32',
+  'lengthBytesUTF32',
+  'allocateUTF8',
+  'writeStringToMemory',
+  'writeAsciiToMemory',
   'getSocketFromFD',
   'getSocketAddress',
   'registerKeyEventCallback',
@@ -5198,6 +4720,7 @@ var missingLibrarySymbols = [
   'getEnvStrings',
   'checkWasiClock',
   'doReadv',
+  'createDyncallWrapper',
   'setImmediateWrapped',
   'clearImmediateWrapped',
   'polyfillSetImmediate',
@@ -5222,6 +4745,9 @@ var missingLibrarySymbols = [
   'SDL_audio',
   'GLFW_Window',
   'runAndAbortIfError',
+  'ALLOC_NORMAL',
+  'ALLOC_STACK',
+  'allocate',
 ];
 missingLibrarySymbols.forEach(missingLibrarySymbol)
 
