@@ -99,9 +99,8 @@
             "request": "launch",
             "console": "integratedTerminal",
             "cwd":"${workspaceRoot}/realpath_c",
-            "runtimeExecutable": "/home/rich/.nvm/versions/node/v16.13.0/bin/node",
             "type": "node",
-            "args": ["~/source"]
+            "args": ["main.js"]
         },
         {
             "name": "Launch Asyncify",
