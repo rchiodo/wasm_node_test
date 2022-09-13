@@ -3,3 +3,5 @@
 /tmp/
 *.wasm
 /patch_cpython/output/
+*.out
+*.o

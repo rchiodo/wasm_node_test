@@ -6,14 +6,38 @@
     // "pythonArgs": ["/home/rich/source/rchiodo-cpython/builddir/emscripten-node-pthreads-dl/python.js", "-Xfrozen_modules=off"],
     "version": "0.2.0",
     "configurations": [
+    {
+        "name": "(gdb) Launch",
+        "type": "cppdbg",
+        "request": "launch",
+        "program": "enter program name, for example ${workspaceFolder}/a.out",
+        "args": [],
+        "stopAtEntry": false,
+        "cwd": "${fileDirname}",
+        "environment": [],
+        "externalConsole": false,
+        "MIMode": "gdb",
+        "setupCommands": [
+            {
+                "description": "Enable pretty-printing for gdb",
+                "text": "-enable-pretty-printing",
+                "ignoreFailures": true
+            },
+            {
+                "description":  "Set Disassembly Flavor to Intel",
+                "text": "-gdb-set disassembly-flavor intel",
+                "ignoreFailures": true
+            }
+        ]
+    },
         {
-            "name": "(gdb) Launch",
+            "name": "(gdb) Launch Esmcripten Realpath",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/poll_test.o",
-            "args": ["test.out"],
+            "program": "${workspaceFolder}/realpath_c/emscripten_realpath.out",
+            "args": ["~/source"],
             "stopAtEntry": false,
-            "cwd": "${fileDirname}",
+            "cwd": "${workspaceFolder}/realpath_c",
             "environment": [],
             "externalConsole": false,
             "MIMode": "gdb",
