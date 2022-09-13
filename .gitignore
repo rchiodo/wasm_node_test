@@ -5,3 +5,9 @@
 /patch_cpython/output/
 *.out
 *.o
+*.exe
+*.obj
+*.pdb
+*.ilk
+/**/*.vs/**/
+/.vs/

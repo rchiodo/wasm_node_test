@@ -1,7 +1,7 @@
 #include <stdlib.h>
 #include <limits.h>
 #include <errno.h>
-#include <unistd.h>
+// #include <unistd.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -9,11 +9,16 @@
 #define SYMLOOP_MAX 20
 #endif
 
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+
 #define ALIGN (sizeof(size_t))
 #define ONES ((size_t)-1/UCHAR_MAX)
 #define HIGHS (ONES * (UCHAR_MAX/2+1))
 #define HASZERO(x) ((x)-ONES & ~(x) & HIGHS)
 
+long readlink(const char* pathname, char* link, size_t linksize);
 char *__strchrnul(const char *s, int c)
 {
 	c = (unsigned char)c;
@@ -194,8 +199,10 @@ int main(int argc, char * argv[]) {
     char *res = em_realpath(argv[1], buf);
     if (res) { // or: if (res != NULL)
         printf("%s is at %s.\n", argv[1], buf);
-    } else {
-        perror("em_realpath");
+	}
+	else {
+        //perror("em_realpath");
+		printf("RealPath is null, errno is %d\n", errno);
         exit(EXIT_FAILURE);
     }
     return 0;

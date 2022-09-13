@@ -7,6 +7,17 @@
     "version": "0.2.0",
     "configurations": [
     {
+        "name": "(Windows) Launch Realpath",
+        "type": "cppvsdbg",
+        "request": "launch",
+        "program": "${workspaceFolder}\\realpath_c\\emscripten_realpath.exe",
+        "args": ["C:\\Users\\aku91\\source\\repos"],
+        "stopAtEntry": false,
+        "cwd": "${workspaceFolder}\\realpath_c",
+        "environment": [],
+        "console": "externalTerminal"
+    },
+    {
         "name": "(gdb) Launch",
         "type": "cppdbg",
         "request": "launch",
